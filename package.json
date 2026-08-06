@@ -1,8 +1,20 @@
 {
   "name": "sahay",
-  "private": true,
   "version": "0.0.0",
+  "private": true,
+  "description": "This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.",
+  "homepage": "https://github.com/Manish-Salavkar/sahai#readme",
+  "bugs": {
+    "url": "https://github.com/Manish-Salavkar/sahai/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://Manish-Salavkar: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@github.com/Manish-Salavkar/sahai.git"
+  },
+  "license": "ISC",
+  "author": "",
   "type": "module",
+  "main": "eslint.config.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

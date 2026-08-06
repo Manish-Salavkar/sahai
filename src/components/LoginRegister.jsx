@@ -1,7 +1,6 @@
-// SAHAY\src\components\LoginRegister.jsx
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ShieldCheck, User, Lock, Mail, ArrowRight, AlertCircle, BadgeCheck } from 'lucide-react';
+import { ShieldCheck, User, Lock, Mail, ArrowRight, AlertCircle, BadgeCheck, Briefcase, Building } from 'lucide-react';
 
 export default function LoginRegister({ onAuthSuccess }) {
   const { t } = useTranslation();
@@ -12,6 +11,8 @@ export default function LoginRegister({ onAuthSuccess }) {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState('officer');
+  const [department, setDepartment] = useState('');
   
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -33,7 +34,9 @@ export default function LoginRegister({ onAuthSuccess }) {
           employee_id: employeeId, 
           full_name: fullName,
           email: email, 
-          password: password 
+          password: password,
+          role: role,
+          department: department || null
         };
 
     try {
@@ -56,7 +59,8 @@ export default function LoginRegister({ onAuthSuccess }) {
       if (isLogin) {
         localStorage.setItem('token', data.access_token);
         localStorage.setItem('username', data.user.full_name); // Save full_name for the UI
-        onAuthSuccess(data.user.full_name);
+        localStorage.setItem('userRole', data.user.role);
+        onAuthSuccess(data.user.full_name, data.user.role);
       } else {
         setIsLogin(true);
         setError('');
@@ -155,6 +159,39 @@ export default function LoginRegister({ onAuthSuccess }) {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder={t('auth.emailPlaceholder', 'name@gov.in')}
+                      className="auth-input"
+                    />
+                  </div>
+                </div>
+
+                {/* Role Dropdown (Officer, Reviewer, Translator) */}
+                <div className="form-group">
+                  <label>{t('auth.role', 'Role')}</label>
+                  <div className="input-icon-wrapper">
+                    <Briefcase size={16} />
+                    <select
+                      value={role}
+                      onChange={(e) => setRole(e.target.value)}
+                      className="auth-input"
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <option value="officer">{t('auth.roleOfficer', 'Officer')}</option>
+                      <option value="reviewer">{t('auth.roleReviewer', 'Reviewer')}</option>
+                      <option value="translator">{t('auth.roleTranslator', 'Translator')}</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Department Text Field */}
+                <div className="form-group">
+                  <label>{t('auth.department', 'Department')}</label>
+                  <div className="input-icon-wrapper">
+                    <Building size={16} />
+                    <input
+                      type="text"
+                      value={department}
+                      onChange={(e) => setDepartment(e.target.value)}
+                      placeholder={t('auth.departmentPlaceholder', 'e.g. School Education & Sports')}
                       className="auth-input"
                     />
                   </div>

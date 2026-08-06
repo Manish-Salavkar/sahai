@@ -4,23 +4,64 @@ import { useTranslation } from 'react-i18next';
 import Chatbot from './components/Chatbot';
 import LoginRegister from './components/LoginRegister';
 import Dashboard from './components/Dashboard';
+import AdminDashboard from './components/AdminDashboard';
+import TranslationWorkspace from './components/TranslationWorkspace';
+import ReviewWorkspace from './components/ReviewWorkspace';
 import Home from './components/Home';
 import Logo from './components/Logo';
-import { Bell } from 'lucide-react';
+import { Bell, CheckCircle } from 'lucide-react';
 import ProfileMenu from "./components/ProfileMenu";
 import { apiFetch } from './utils/api';
 
 export default function App() {
   const { t, i18n } = useTranslation();
-  const [user, setUser] = useState(null);
-  const [currentTab, setCurrentTab] = useState('home');
+  const validTabs = ['home', 'chatbot', 'dashboard', 'translation', 'review', 'admin', 'auth'];
+  const getTabFromHash = () => {
+    const hash = window.location.hash.replace('#', '');
+    return validTabs.includes(hash) ? hash : 'home';
+  };
 
-  // This acts as your reactive global language variable
+  const [user, setUser] = useState(() => localStorage.getItem('username'));
+  const [userRole, setUserRole] = useState(() => localStorage.getItem('userRole'));
+  const [accessibleServices, setAccessibleServices] = useState(['chatbot', 'dashboard', 'translation', 'review']);
+  const [currentTab, setCurrentTab] = useState(getTabFromHash);
+  const [toast, setToast] = useState(null);
+
   const currentLanguage = i18n.language || 'en'; 
 
+  const fetchUserPermissions = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    try {
+      const res = await fetch('http://localhost:8000/auth/services/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserRole(data.role);
+        setAccessibleServices(data.services || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch user service permissions:', err);
+    }
+  };
+
   useEffect(() => {
-    const savedUser = localStorage.getItem('username');
-    if (savedUser) setUser(savedUser);
+    if (localStorage.getItem('token')) {
+      fetchUserPermissions();
+    }
+  }, []);
+
+  useEffect(() => {
+    window.location.hash = currentTab;
+  }, [currentTab]);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setCurrentTab(getTabFromHash());
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
   const handleLogout = async () => {
@@ -41,16 +82,36 @@ export default function App() {
 
     localStorage.removeItem("token");
     localStorage.removeItem("username");
+    localStorage.removeItem("userRole");
 
     setUser(null);
+    setUserRole(null);
     setCurrentTab("home");
+
+    setToast('You have been logged out successfully.');
+    setTimeout(() => setToast(null), 3000);
   };
 
-  // --- Sliding Toggle Handler ---
+  const navigateTab = (tab) => {
+    const protectedTabs = ['chatbot', 'dashboard', 'translation', 'review', 'admin'];
+    if (!user && protectedTabs.includes(tab)) {
+      setCurrentTab('auth');
+    } else {
+      setCurrentTab(tab);
+    }
+  };
+
   const toggleLanguage = () => {
     const newLang = currentLanguage.startsWith('en') ? 'mr' : 'en';
     i18n.changeLanguage(newLang);
   };
+
+  const normRole = (userRole || '').toLowerCase();
+  const showChatbot = normRole === 'admin' || accessibleServices.includes('chatbot');
+  const showDashboard = normRole === 'admin' || accessibleServices.includes('dashboard');
+  const showTranslation = normRole === 'admin' || normRole === 'translator' || accessibleServices.includes('translation');
+  const showReview = normRole === 'admin' || normRole === 'reviewer' || accessibleServices.includes('review');
+  const showAdmin = normRole === 'admin';
 
   return (
     <div className="app-container">
@@ -69,20 +130,45 @@ export default function App() {
           <button onClick={() => setCurrentTab('home')} className={currentTab === 'home' ? 'active' : ''}>
             {t('nav.home', 'Home')}
           </button>
-          <button onClick={() => setCurrentTab('chatbot')} className={currentTab === 'chatbot' ? 'active' : ''}>
-            {t('nav.chatbot', 'Chatbot')}
-          </button>
-          <button onClick={() => setCurrentTab('dashboard')} className={currentTab === 'dashboard' ? 'active' : ''}>
-            {t('nav.dashboard', 'Document Dashboard')}
-          </button>
-          <button onClick={() => alert('Help section ready')}>
+          
+          {showChatbot && (
+            <button onClick={() => navigateTab('chatbot')} className={currentTab === 'chatbot' ? 'active' : ''}>
+              {t('nav.chatbot', 'Chatbot')}
+            </button>
+          )}
+          
+          {showDashboard && (
+            <button onClick={() => navigateTab('dashboard')} className={currentTab === 'dashboard' ? 'active' : ''}>
+              {t('nav.dashboard', 'Document Dashboard')}
+            </button>
+          )}
+
+          {showTranslation && (
+            <button onClick={() => navigateTab('translation')} className={currentTab === 'translation' ? 'active' : ''}>
+              {t('nav.translation', 'Translation Workspace')}
+            </button>
+          )}
+
+          {showReview && (
+            <button onClick={() => navigateTab('review')} className={currentTab === 'review' ? 'active' : ''}>
+              {t('nav.review', 'Review Workspace')}
+            </button>
+          )}
+
+          {showAdmin && (
+            <button onClick={() => navigateTab('admin')} className={currentTab === 'admin' ? 'active' : ''}>
+              {t('nav.adminConsole', 'Admin Console')}
+            </button>
+          )}
+
+          <button>
             {t('nav.help', 'Help')}
           </button>
         </nav>
 
         <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           
-          {/* --- Custom Sliding Language Toggle --- */}
+          {/* Custom Sliding Language Toggle */}
           <div 
             onClick={toggleLanguage}
             style={{
@@ -98,7 +184,6 @@ export default function App() {
               userSelect: 'none'
             }}
           >
-            {/* Sliding White Pill */}
             <div 
               style={{
                 position: 'absolute',
@@ -109,11 +194,10 @@ export default function App() {
                 borderRadius: '16px',
                 boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
                 left: currentLanguage.startsWith('en') ? '3px' : '45px',
-                transition: 'left 0.3s cubic-bezier(0.4, 0.0, 0.2, 1)' // Smooth glide
+                transition: 'left 0.3s cubic-bezier(0.4, 0.0, 0.2, 1)'
               }}
             />
             
-            {/* EN Label */}
             <span style={{ 
               flex: 1, 
               textAlign: 'center', 
@@ -126,7 +210,6 @@ export default function App() {
               EN
             </span>
             
-            {/* Marathi Label */}
             <span style={{ 
               flex: 1, 
               textAlign: 'center', 
@@ -156,17 +239,36 @@ export default function App() {
       </header>
 
       <main style={{ flex: 1 }}>
-        {/* Passed currentLanguage as a prop to components below if needed */}
         {!user && currentTab === 'auth' ? (
-          <LoginRegister onAuthSuccess={(username) => { setUser(username); setCurrentTab('chatbot'); }} />
+          <LoginRegister onAuthSuccess={(username, role) => { 
+            setUser(username); 
+            setUserRole(role);
+            fetchUserPermissions();
+            if (role && role.toLowerCase() === 'admin') {
+              setCurrentTab('admin');
+            } else {
+              setCurrentTab('chatbot');
+            }
+          }} />
         ) : !user ? (
-          <Home onNavigate={(tab) => setCurrentTab(tab)} currentLanguage={currentLanguage} />
+          <Home onNavigate={(tab) => navigateTab(tab)} currentLanguage={currentLanguage} />
         ) : (
-          currentTab === 'home' ? <Home onNavigate={(tab) => setCurrentTab(tab)} currentLanguage={currentLanguage} /> :
-          currentTab === 'chatbot' ? <Chatbot user={user} onLogout={handleLogout} currentLanguage={currentLanguage} /> :
-          <Dashboard currentLanguage={currentLanguage} />
+          currentTab === 'home' ? <Home onNavigate={(tab) => navigateTab(tab)} currentLanguage={currentLanguage} /> :
+          currentTab === 'admin' && showAdmin ? <AdminDashboard /> :
+          currentTab === 'chatbot' && showChatbot ? <Chatbot user={user} currentLanguage={currentLanguage} /> :
+          currentTab === 'dashboard' && showDashboard ? <Dashboard currentLanguage={currentLanguage} /> :
+          currentTab === 'translation' && showTranslation ? <TranslationWorkspace /> :
+          currentTab === 'review' && showReview ? <ReviewWorkspace /> :
+          <Home onNavigate={(tab) => navigateTab(tab)} currentLanguage={currentLanguage} />
         )}
       </main>
+
+      {toast && (
+        <div className="toast-notification">
+          <CheckCircle size={16} />
+          <span>{toast}</span>
+        </div>
+      )}
     </div>
   );
 }

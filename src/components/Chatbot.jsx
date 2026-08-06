@@ -1,7 +1,7 @@
 // SAHAY\src\components\Chatbot.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Search, Send, FileText, Settings, LogOut, User, Sparkles, Bot, Layers, Eye, Star, ThumbsUp, ThumbsDown, Check, ChevronDown, ChevronUp, MessageSquarePlus } from 'lucide-react';
+import { Plus, Search, Send, FileText, Sparkles, Bot, Layers, Eye, Star, ThumbsUp, ThumbsDown, Check, ChevronDown, ChevronUp, MessageSquarePlus, Copy, ClipboardCheck, Trash2, AlertTriangle } from 'lucide-react';
 import DocumentModal from './DocumentModal';
 import TransliterationInput from './TransliterationInput';
 import { apiFetch } from '../utils/api';
@@ -10,6 +10,69 @@ const calculateConfidence = (rawScore) => {
   if (rawScore === undefined || rawScore === null) return null;
   return Math.round((1 / (1 + Math.exp(-rawScore))) * 100);
 };
+
+function parseAndCleanCitation(rawText) {
+  if (!rawText) return { metadata: {}, text: '' };
+
+  let title = null;
+  let department = null;
+  let section = null;
+
+  const titleMatch = rawText.match(/Title:\s*(.+?)(?=\r?\n|Department:|Section:|---|$)/i);
+  if (titleMatch && titleMatch[1].trim()) title = titleMatch[1].trim();
+
+  const deptMatch = rawText.match(/Department:\s*(.+?)(?=\r?\n|Section:|---|$)/i);
+  if (deptMatch && deptMatch[1].trim()) department = deptMatch[1].trim();
+
+  const sectionMatch = rawText.match(/Section:\s*(.+?)(?=\r?\n|---|$)/i);
+  if (sectionMatch && sectionMatch[1].trim()) section = sectionMatch[1].trim();
+
+  let cleaned = rawText
+    .replace(/^Title:\s*.*$/gmi, '')
+    .replace(/^Department:\s*.*$/gmi, '')
+    .replace(/^Section:\s*.*$/gmi, '')
+    .replace(/^---+\s*$/gmi, '');
+
+  const rawLines = cleaned
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+
+  const paragraphs = [];
+  let currentBuffer = '';
+
+  rawLines.forEach((line) => {
+    if (!currentBuffer) {
+      currentBuffer = line;
+    } else {
+      const lastChar = currentBuffer.slice(-1);
+      if (['.', '।', '!', '?', ':', ';'].includes(lastChar)) {
+        paragraphs.push(currentBuffer);
+        currentBuffer = line;
+      } else {
+        currentBuffer += ' ' + line;
+      }
+    }
+  });
+  if (currentBuffer) paragraphs.push(currentBuffer);
+
+  const uniqueParagraphs = [];
+  paragraphs.forEach((p) => {
+    if (
+      p &&
+      (!uniqueParagraphs.length || uniqueParagraphs[uniqueParagraphs.length - 1] !== p) &&
+      !p.startsWith('Title:') &&
+      !p.startsWith('Department:')
+    ) {
+      uniqueParagraphs.push(p);
+    }
+  });
+
+  return {
+    metadata: { title, department, section },
+    text: uniqueParagraphs.join('\n\n')
+  };
+}
 
 function formatMessageContent(content) {
   if (!content) return null;
@@ -265,10 +328,12 @@ function MessageFeedbackDropdown({ messageId, sessionId }) {
   );
 }
 
-export default function Chatbot({ user, onLogout, currentLanguage }) {
+export default function Chatbot({ user, currentLanguage }) {
   const { t } = useTranslation();
   const [sessions, setSessions] = useState([]);
-  const [sessionId, setSessionId] = useState(null);
+  const [sessionId, setSessionId] = useState(() => {
+    return sessionStorage.getItem('chatbot_sessionId') || null;
+  });
   
   const [messages, setMessages] = useState([
     {
@@ -281,6 +346,45 @@ export default function Chatbot({ user, onLogout, currentLanguage }) {
   const [citations, setCitations] = useState([]);
   const [activeTab, setActiveTab] = useState('citations');
   const [selectedCitationForModal, setSelectedCitationForModal] = useState(null);
+  const [copiedMsgIndex, setCopiedMsgIndex] = useState(null);
+  const [sessionToDelete, setSessionToDelete] = useState(null);
+  const [deletingSession, setDeletingSession] = useState(false);
+
+  const handleCopyMessage = async (content, index) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMsgIndex(index);
+      setTimeout(() => setCopiedMsgIndex(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!sessionToDelete) return;
+    setDeletingSession(true);
+    const token = localStorage.getItem('token');
+    try {
+      const response = await apiFetch(`/chatbot/sessions/${sessionToDelete.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        if (String(sessionId) === String(sessionToDelete.id)) {
+          startNewChat();
+        }
+        setSessions((prev) => prev.filter((s) => String(s.id) !== String(sessionToDelete.id)));
+        setSessionToDelete(null);
+      } else {
+        console.error("Failed to delete session");
+      }
+    } catch (err) {
+      console.error("Error deleting session:", err);
+    } finally {
+      setDeletingSession(false);
+    }
+  };
 
   const chatEndRef = useRef(null);
 
@@ -291,6 +395,15 @@ export default function Chatbot({ user, onLogout, currentLanguage }) {
   useEffect(() => {
     scrollToBottom();
   }, [messages, loading]);
+
+  // Persist sessionId to sessionStorage
+  useEffect(() => {
+    if (sessionId) {
+      sessionStorage.setItem('chatbot_sessionId', sessionId);
+    } else {
+      sessionStorage.removeItem('chatbot_sessionId');
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     fetchSessions();
@@ -305,6 +418,15 @@ export default function Chatbot({ user, onLogout, currentLanguage }) {
       if (response.ok) {
         const data = await response.json();
         setSessions(data);
+
+        // Auto-restore saved session on first load
+        const savedSessionId = sessionStorage.getItem('chatbot_sessionId');
+        if (savedSessionId) {
+          const sessionExists = data.some(s => String(s.id) === String(savedSessionId));
+          if (sessionExists) {
+            loadSession(savedSessionId);
+          }
+        }
       }
     } catch (err) {
       console.error("Failed to fetch sessions", err);
@@ -400,6 +522,7 @@ export default function Chatbot({ user, onLogout, currentLanguage }) {
     setMessages([{ role: 'assistant', content: t('chatbot.new_chat_started') }]);
     setCitations([]);
     setSessionId(null);
+    sessionStorage.removeItem('chatbot_sessionId');
   };
 
   const calculateNormalizedConfidence = (score) => {
@@ -461,23 +584,30 @@ export default function Chatbot({ user, onLogout, currentLanguage }) {
               sessions.map((session) => (
                 <div 
                   key={session.id} 
-                  className={`history-item ${sessionId === session.id ? 'active' : ''}`}
+                  className={`history-item ${String(sessionId) === String(session.id) ? 'active' : ''}`}
                   onClick={() => loadSession(session.id)}
                 >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: '0.35rem' }}>
                     {session.title || t('chatbot.new_chat')}
                   </span>
+                  <button
+                    type="button"
+                    className="delete-chat-btn"
+                    title={t('chatbot.delete_chat')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSessionToDelete(session);
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               ))
             )}
           </div>
         </div>
 
-        <div className="sidebar-footer">
-          <button className="footer-btn"><User size={14} /> {t('common.profile')}</button>
-          <button className="footer-btn"><Settings size={14} /> {t('common.settings')}</button>
-          <button onClick={onLogout} className="footer-btn logout"><LogOut size={14} /> {t('common.logout')}</button>
-        </div>
+
       </div>
 
       {/* ---------------- Main Chat Panel ---------------- */}
@@ -496,7 +626,32 @@ export default function Chatbot({ user, onLogout, currentLanguage }) {
           {messages.map((msg, index) => (
             <div key={index} className={`msg-wrapper ${msg.role}`}>
               <span className="msg-role">{msg.role === 'user' ? t('chatbot.role_user') : t('chatbot.role_assistant')}</span>
-              <div className="msg-bubble">
+              <div className="msg-bubble" style={{ position: 'relative' }}>
+                {msg.role === 'assistant' && (
+                  <button
+                    onClick={() => handleCopyMessage(msg.content, index)}
+                    title="Copy to clipboard"
+                    style={{
+                      position: 'absolute',
+                      top: '0.5rem',
+                      right: '0.5rem',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '0.25rem',
+                      borderRadius: 'var(--radius-sm)',
+                      color: copiedMsgIndex === index ? '#10b981' : 'var(--text-light)',
+                      transition: 'color 0.2s, background 0.2s',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onMouseEnter={(e) => { if (copiedMsgIndex !== index) e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                    onMouseLeave={(e) => { if (copiedMsgIndex !== index) e.currentTarget.style.color = 'var(--text-light)'; e.currentTarget.style.background = 'none'; }}
+                  >
+                    {copiedMsgIndex === index ? <ClipboardCheck size={14} /> : <Copy size={14} />}
+                  </button>
+                )}
                 {msg.role === 'assistant' ? formatMessageContent(msg.content) : msg.content}
                 
                 {msg.role === 'assistant' && msg.citations && msg.citations.length > 0 && (
@@ -570,17 +725,51 @@ export default function Chatbot({ user, onLogout, currentLanguage }) {
               );
 
               if (activeTab === "citations") {
+                const { metadata, text: cleanText } = parseAndCleanCitation(item.text);
                 return (
-                  <div key={idx} style={{ padding: "1rem", borderBottom: "1px solid var(--border-color)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: ".5rem", fontSize: ".75rem", color: "var(--text-muted)" }}>
-                      <span>{t('chatbot.page', { number: item.page_number })}</span>
+                  <div key={idx} className="citation-item-card">
+                    <div className="citation-item-header">
+                      <div className="citation-page-tag">
+                        <FileText size={12} />
+                        <span>{t('chatbot.page', { number: item.page_number || item.page || 1 })}</span>
+                      </div>
                       {confidence != null && (
-                        <span>{t('chatbot.match', { confidence })}</span>
+                        <span className="citation-match-badge">
+                          {t('chatbot.match', { confidence })}
+                        </span>
                       )}
                     </div>
-                    <div style={{ fontSize: ".82rem", lineHeight: 1.6, color: "var(--text-main)", whiteSpace: "pre-wrap" }}>
-                      {item.text}
-                    </div>
+
+                    {(metadata.title || metadata.department || metadata.section) && (
+                      <div className="citation-item-meta-box">
+                        {metadata.title && (
+                          <div className="citation-meta-title" title={metadata.title}>
+                            {metadata.title}
+                          </div>
+                        )}
+                        <div className="citation-meta-tags">
+                          {metadata.department && (
+                            <span className="citation-meta-tag dept">{metadata.department}</span>
+                          )}
+                          {metadata.section && (
+                            <span className="citation-meta-tag sec">{metadata.section}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {cleanText && (
+                      <div className="citation-item-text">
+                        {cleanText}
+                      </div>
+                    )}
+
+                    <button 
+                      className="btn-preview" 
+                      onClick={() => setSelectedCitationForModal(item)}
+                    >
+                      <Eye size={12}/> {t('common.preview')}
+                    </button>
                   </div>
                 );
               }
@@ -615,6 +804,46 @@ export default function Chatbot({ user, onLogout, currentLanguage }) {
           citation={selectedCitationForModal} 
           onClose={() => setSelectedCitationForModal(null)} 
         />
+      )}
+
+      {/* ---------------- Delete Chat Confirmation Modal ---------------- */}
+      {sessionToDelete && (
+        <div className="modal-overlay" style={{ zIndex: 100 }}>
+          <div className="delete-modal-card">
+            <div className="delete-modal-header">
+              <div className="delete-modal-icon">
+                <AlertTriangle size={20} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 className="delete-modal-title">{t('chatbot.delete_chat_title')}</h3>
+                <p className="delete-modal-subtitle">{sessionToDelete.title || t('chatbot.new_chat')}</p>
+              </div>
+            </div>
+
+            <p className="delete-modal-text">
+              {t('chatbot.delete_chat_confirm')}
+            </p>
+
+            <div className="delete-modal-actions">
+              <button 
+                type="button" 
+                className="btn-delete-cancel" 
+                onClick={() => setSessionToDelete(null)}
+                disabled={deletingSession}
+              >
+                {t('chatbot.cancel')}
+              </button>
+              <button 
+                type="button" 
+                className="btn-delete-confirm" 
+                onClick={handleConfirmDelete}
+                disabled={deletingSession}
+              >
+                {deletingSession ? t('auth.processing') : t('chatbot.delete')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
